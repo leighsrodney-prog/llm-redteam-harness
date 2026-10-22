@@ -1,3 +1,5 @@
+> **This project's home is now [github.com/globe-teck/llm-redteam-harness](https://github.com/globe-teck/llm-redteam-harness).** This copy stays up for existing links. Please open issues and pull requests there.
+
 # llm-redteam-harness
 
 [![CI](https://github.com/leighsrodney-prog/llm-redteam-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/leighsrodney-prog/llm-redteam-harness/actions/workflows/ci.yml)
