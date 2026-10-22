@@ -1,0 +1,7 @@
+[run]
+branch = True
+source = harness
+
+[report]
+show_missing = True
+skip_covered = False

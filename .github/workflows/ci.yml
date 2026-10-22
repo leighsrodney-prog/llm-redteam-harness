@@ -1,17 +1,64 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.10.14", "3.12.4"]
+    env:
+      HYPOTHESIS_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -r requirements.txt
-      - run: pytest -q
+      - run: pip install -r requirements-dev.txt
+      - name: Tests with branch coverage (gate 95%)
+        run: pytest -q --cov --cov-config=.coveragerc-core --cov-report=term --cov-report=xml --cov-fail-under=95
+      - name: Coverage summary
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          r = ET.parse("coverage.xml").getroot()
+          print(f"### Coverage ({'${{ matrix.python-version }}'})\n")
+          print(f"Lines {float(r.get('line-rate'))*100:.1f}% | branches {float(r.get('branch-rate'))*100:.1f}%\n")
+          print("| module | lines |\n|---|---|")
+          for c in r.iter("class"):
+              print(f"| {c.get('filename')} | {float(c.get('line-rate'))*100:.0f}% |")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 7
       - run: python -m harness run --suite suites/default.yaml --adapter mock --out reports --fail-under 0.8
       - run: python -m harness agent --suite suites/agent.yaml --model mock-agent --out reports/agent
+  agentdojo-offline:
+    runs-on: ubuntu-latest
+    env:
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.4"
+      - run: pip install -r requirements-agentdojo.txt
+      - name: Full test suite incl. AgentDojo bridge (coverage gate 95%)
+        run: pytest -q --cov --cov-report=term --cov-fail-under=95
+      - name: Offline AgentDojo runs (scripted agents, no model, no network)
+        run: |
+          for s in banking slack; do
+            python -m harness agentdojo --suite "$s" --agent ground_truth --out "reports/agentdojo/$s-ground_truth" --max-asr 0
+            python -m harness agentdojo --suite "$s" --agent follow_injections --out "reports/agentdojo/$s-follow"
+            python -m harness agentdojo --suite "$s" --agent follow_injections --defense tool_filter --out "reports/agentdojo/$s-tool_filter"
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentdojo-offline-reports
+          path: reports/agentdojo/
+          retention-days: 7

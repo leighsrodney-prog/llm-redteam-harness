@@ -139,7 +139,7 @@ LOADERS = {
                   "gated": "accept the terms at huggingface.co/datasets/ai-safety-institute/AgentHarm, download "
                            "harmful_behaviors_test_public.json and pass path="},
     # Code-defined environments (Python packages), not flat files: adapter stub only.
-    "agentdojo": {"url": None, "file": None, "parse": _gated("agentdojo", "install the agentdojo package; tasks are Python objects. Bridge not implemented.")},
+    "agentdojo": {"url": None, "file": None, "parse": _gated("agentdojo", "tasks are Python objects, not files; use `python -m harness agentdojo` (harness/bridges/agentdojo_offline.py) instead.")},
     "taubench": {"url": None, "file": None, "parse": _gated("tau-bench", "clone sierra-research/tau-bench; tasks need its simulated user + DB. Bridge not implemented.")},
 }
 

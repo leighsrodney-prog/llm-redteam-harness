@@ -2,7 +2,7 @@
 
 # llm-redteam-harness
 
-[![CI](https://github.com/leighsrodney-prog/llm-redteam-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/leighsrodney-prog/llm-redteam-harness/actions/workflows/ci.yml)
+[![CI](https://github.com/globe-teck/llm-redteam-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/globe-teck/llm-redteam-harness/actions/workflows/ci.yml)
 
 📄 **[Sample report (mock adapter)](reports/report.md)**
 
@@ -66,9 +66,44 @@ There is **no** adapter yet that drives a real model's native tool-calling.
 python3 -m harness agent --suite suites/agent.yaml --model mock-agent
 ```
 
+## AgentDojo, offline (optional extra)
+`python -m harness agentdojo` runs [AgentDojo](https://github.com/ethz-spylab/agentdojo)'s real task
+suites (workspace, travel, banking, slack), its prompt-injection attacks and its utility/security checkers
+end to end with **scripted agents and no model or network calls**. The bridge plugs into AgentDojo's own
+pipeline interface (`harness/bridges/agentdojo_offline.py`):
+
+- `ground_truth` runs each user task's reference tool calls. It's a sanity upper bound: utility should be
+  100% and attack success 0%.
+- `follow_injections` does the same, but whenever a tool result contains an injected goal it also runs that
+  injection task's reference calls. It's a worst-case, fully injectable agent; AgentDojo's checker decides
+  whether the attack actually succeeded.
+- `--defense tool_filter` puts the follower behind a simple allowlist: only tools the user task itself
+  needs may be called.
+
+```bash
+pip install -r requirements-agentdojo.txt     # pins agentdojo==0.1.35
+python -m harness agentdojo --suite banking --agent follow_injections --defense tool_filter --max-asr 0.5
+```
+
+Calibration run, AgentDojo 0.1.35, benchmark v1.2.2, `important_instructions` attack, every user x
+injection task pair (scripted agents, **not a model evaluation**):
+
+| suite | pairs | follower: utility under attack | follower: attack success | + tool_filter: utility | + tool_filter: attack success |
+|---|---|---|---|---|---|
+| workspace | 560 | 60.2% | 38.4% | 95.4% | 3.9% |
+| travel | 140 | 18.6% | 82.9% | 93.6% | 3.6% |
+| banking | 144 | 86.8% | 97.9% | 98.6% | 31.9% |
+| slack | 105 | 97.1% | 100% | 97.1% | 20.0% |
+
+`ground_truth` scored 100% utility and 0% attack success on all four suites, and clean (no-attack) utility
+was 100% for every agent. The allowlist helps most where the attack needs a tool the user task doesn't
+(travel, workspace) and least where both use the same tool (banking transfers, slack messages), which is
+why tool filtering alone isn't a complete defense. Results include a replication manifest like the other
+modes, and `--max-asr` turns a run into a CI gate.
+
 ## Benchmarks and the CBRN filter
 Loaders for HarmBench, XSTest, TruthfulQA, SimpleQA and InjecAgent download public files and
-hash them. AgentHarm is gated (local-file parser only); AgentDojo and tau-bench are stubs. Every
+hash them. AgentHarm is gated (local-file parser only); AgentDojo runs through the offline bridge above; tau-bench is a stub. Every
 load passes a **mandatory chem/bio/radiological/nuclear/WMD filter** (category + keyword), with a
 test proving such items are dropped. The filter is enforced in `load_benchmark()` and the CLI only:
 calling a parser in `LOADERS[...]["parse"]` directly, or running your own YAML/JSONL suite, is **not**
@@ -107,6 +142,27 @@ read -rs LLM_API_KEY && export LLM_API_KEY
 python3 -m harness run --adapter openai --concurrency 8 --retries 3 --timeout 20
 pytest -q          # mock only, network is blocked in tests
 ```
+
+## Testing
+```bash
+pip install -r requirements-dev.txt          # adds Hypothesis and pytest-cov
+HYPOTHESIS_PROFILE=ci pytest --cov --cov-report=term
+```
+- **90 tests, offline** (80 core, plus 10 for the AgentDojo bridge that run when the extra is installed). Network calls fail the test (an autouse fixture blocks `urllib`), and the
+  local llama.cpp adapter is tested against a fake `llama_cpp` module, so no model is needed.
+- **Property-based tests** (Hypothesis) for the core math and scoring: percentiles stay within the
+  data and grow with the percentile, bootstrap intervals are ordered and inside the data range,
+  Holm-adjusted p-values are never below the raw ones and keep their order, identical runs never
+  look like a regression, the scorer never raises on arbitrary text, and suites round-trip through
+  YAML and JSONL. The `ci` profile is derandomized so CI failures reproduce.
+- **Shared fixtures** in `tests/conftest.py`: a `Case` factory, a suite-file writer, a zero-latency
+  mock adapter and the fake llama.cpp module.
+- **Edge cases**: per-field suite validation, timeouts and adapter exceptions with retries, the
+  `--fail-under` gate, the judge hook, gated datasets, cached downloads and the `python -m harness`
+  entry point.
+- **Branch coverage gate in CI**: 96% locally; CI fails below 95%, writes a per-module table to the
+  job summary and keeps `coverage.xml` as an artifact for 7 days. A separate CI job installs the pinned
+  AgentDojo extra, runs the full suite with the bridge included (96% locally) and uploads offline AgentDojo reports.
 
 ## Example report (mock adapter)
 `ben-003` fails on purpose. The mock's keyword-based safety rules refuse a harmless
@@ -148,14 +204,14 @@ pytest -q          # mock only, network is blocked in tests
 - The suite is small and illustrative, not a benchmark. Pass rates on it say little about a model's overall safety.
 - The classic `run` command is single-turn. Multi-turn/tool-use exists only in the offline agent mode,
   tested with a mock model; no real model has been evaluated in agent mode.
-- AgentDojo and tau-bench are stubs; AgentHarm needs a locally downloaded file; InjecAgent is loaded as
+- AgentDojo runs offline with scripted agents only (no model adapter yet); tau-bench is a stub; AgentHarm needs a locally downloaded file; InjecAgent is loaded as
   prompts + metadata without its tool emulator.
 - QA grading in the smoke script is crude (SimpleQA: normalized substring; TruthfulQA: token-overlap heuristic) and undercounts correct paraphrases.
 - No multimodal inputs.
 
 ## Roadmap
 - Native tool-calling adapter for local open models
-- AgentDojo / tau-bench bridges
+- A model adapter for the AgentDojo bridge (local open-weight model first); tau-bench bridge
 - Encoded and obfuscated leaks (base64, homoglyphs)
 - Judge-agreement metrics (judge vs. regex scorers vs. human labels)
 

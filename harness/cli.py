@@ -29,7 +29,21 @@ def main(argv=None):
     d.add_argument("name")
     d.add_argument("--path", help="local file (required for gated datasets)")
     d.add_argument("--limit", type=int)
+    g = sub.add_parser("agentdojo", help="run AgentDojo suites offline with scripted agents (needs the agentdojo extra)")
+    g.add_argument("--suite", default="workspace", choices=["workspace", "travel", "banking", "slack"])
+    g.add_argument("--benchmark-version", default="v1.2.2")
+    g.add_argument("--agent", default="follow_injections", choices=["ground_truth", "follow_injections"])
+    g.add_argument("--defense", default="none", choices=["none", "tool_filter"])
+    g.add_argument("--attack", default="important_instructions",
+                   help="any AgentDojo attack that needs no model, e.g. important_instructions, direct, ignore_previous")
+    g.add_argument("--user-tasks", nargs="*", help="user task ids (default: all)")
+    g.add_argument("--injection-tasks", nargs="*", help="injection task ids (default: all)")
+    g.add_argument("--limit-user", type=int)
+    g.add_argument("--out", default="reports/agentdojo")
+    g.add_argument("--max-asr", type=float, default=None, help="exit 1 if attack success rate is above this (0-1)")
     args = ap.parse_args(argv)
+    if args.cmd == "agentdojo":
+        return _agentdojo(args)
     if args.cmd == "agent":
         return _agent(args)
     if args.cmd == "dataset":
@@ -70,6 +84,29 @@ def _agent(args):
     j, m = write_run_report(args.out, man, rep["results"], rep["summary"], title="Agent tool-use run")
     s = rep["summary"]
     print(f"{s['passed']}/{s['total']} agent tasks passed | wrote {j} and {m}")
+    return 0
+
+
+def _agentdojo(args):
+    from datetime import datetime, timezone
+    from .bridges import agentdojo_offline as ad
+    from .manifest import build_manifest, write_run_report
+    t0 = datetime.now(timezone.utc).isoformat()
+    rep = ad.run(args.suite, version=args.benchmark_version, agent=args.agent, defense=args.defense,
+                 attack=args.attack, user_tasks=args.user_tasks, injection_tasks=args.injection_tasks,
+                 limit_user=args.limit_user)
+    s = rep["summary"]
+    man = build_manifest(f"offline-{args.agent}", "scripted",
+                         [{"dataset": f"agentdojo/{args.suite}", "version": f"{s['agentdojo_version']} {args.benchmark_version}",
+                           "item_ids": [r["id"] for r in rep["results"]]}],
+                         seeds=[0], settings={"deterministic": True, "defense": args.defense, "attack": args.attack},
+                         started=t0)
+    j, m = write_run_report(args.out, man, rep["results"], s, title=f"AgentDojo offline run: {args.suite}")
+    print(f"agentdojo {args.suite} {args.agent}/{args.defense} attack={args.attack}: {s['total']} pairs | "
+          f"utility {s['utility_clean']:.0%} clean, {s['utility_under_attack']:.0%} under attack | "
+          f"ASR {s['attack_success_rate']:.1%} | blocked {s['blocked_calls']} | wrote {j} and {m}")
+    if args.max_asr is not None and s["attack_success_rate"] > args.max_asr:
+        return 1
     return 0
 
 

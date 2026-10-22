@@ -1,0 +1,8 @@
+# Coverage config for CI jobs without the optional agentdojo extra (its bridge is measured in the agentdojo job).
+[run]
+branch = True
+source = harness
+omit = harness/bridges/agentdojo_offline.py
+
+[report]
+show_missing = True
